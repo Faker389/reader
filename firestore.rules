@@ -1,0 +1,182 @@
+rules_version = '2';
+
+// Fovea Firestore security rules.
+//
+// Principles:
+//  * A user can only ever read or write documents under users/{their uid}.
+//  * Clients may write only fields they legitimately own (profile basics,
+//    book metadata/progress, immutable session logs). Aggregates, streaks and
+//    achievements are written exclusively by Cloud Functions (Admin SDK,
+//    which bypasses these rules).
+//  * Book *text* is never stored in Firestore; book documents are validated
+//    against a strict key whitelist so content cannot be smuggled in.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isString(v, maxLen) {
+      return v is string && v.size() <= maxLen;
+    }
+
+    function isOptionalString(v, maxLen) {
+      return v == null || isString(v, maxLen);
+    }
+
+    function isIntIn(v, lo, hi) {
+      return v is int && v >= lo && v <= hi;
+    }
+
+    function isOptionalMillis(v) {
+      return v == null || isIntIn(v, 0, 32503680000000);
+    }
+
+    function isFraction(v) {
+      return (v is float || v is int) && v >= 0 && v <= 1;
+    }
+
+    // --- Profile ------------------------------------------------------------
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && validProfile(request.resource.data);
+
+      function validProfile(d) {
+        // Only editable fields; server-owned aggregates (totalWordsRead,
+        // currentStreak, ...) may not be set by the client.
+        return d.keys().hasOnly([
+            'uid', 'name', 'email', 'avatar', 'createdAt',
+            'readingGoalMinutes', 'currentWpm', 'updatedAt',
+            // Server-maintained fields already on the document are allowed to
+            // remain, but must be unchanged by this write.
+            'totalWordsRead', 'totalReadingTime', 'booksCompleted',
+            'currentStreak', 'longestStreak', 'lastReadingDate', 'statsUpdatedAt'
+          ])
+          && serverFieldsUnchanged(d)
+          && d.uid == uid
+          && isString(d.name, 60)
+          && isString(d.email, 320)
+          && isOptionalString(d.avatar, 2048)
+          && isOptionalMillis(d.createdAt)
+          && isIntIn(d.readingGoalMinutes, 1, 600)
+          && isIntIn(d.currentWpm, 50, 1200)
+          && d.updatedAt == request.time;
+      }
+
+      function serverFieldsUnchanged(d) {
+        let before = resource == null ? {} : resource.data;
+        let serverKeys = ['totalWordsRead', 'totalReadingTime', 'booksCompleted',
+                          'currentStreak', 'longestStreak', 'lastReadingDate', 'statsUpdatedAt'];
+        return d.diff(before).affectedKeys().hasAny(serverKeys) == false;
+      }
+
+      // --- Library metadata (no text) --------------------------------------
+      match /books/{bookId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validBook(request.resource.data, bookId);
+
+        function validBook(d, id) {
+          return d.keys().hasOnly([
+              'id', 'title', 'author', 'format', 'source', 'totalWords', 'chapterCount',
+              'description', 'createdAt', 'updatedAt', 'lastOpened', 'currentWordIndex',
+              'currentChapter', 'wordsRead', 'totalReadingTime', 'sessions', 'completed',
+              'completedAt', 'favorite', 'percentage'
+            ])
+            && d.id == id
+            && isString(d.title, 160) && d.title.size() > 0
+            && isString(d.author, 120)
+            && d.format in ['txt', 'epub', 'csv', 'sample', 'pdf']
+            && d.source in ['sample', 'imported']
+            && isIntIn(d.totalWords, 0, 10000000)
+            && isIntIn(d.chapterCount, 0, 100000)
+            && isOptionalString(d.description, 2000)
+            && isOptionalMillis(d.createdAt)
+            && isOptionalMillis(d.updatedAt)
+            && isOptionalMillis(d.lastOpened)
+            && isIntIn(d.currentWordIndex, 0, 10000000)
+            && isIntIn(d.currentChapter, 0, 100000)
+            && isIntIn(d.wordsRead, 0, 100000000)
+            && isIntIn(d.totalReadingTime, 0, 100000000)
+            && isIntIn(d.sessions, 0, 1000000)
+            && d.completed is bool
+            && isOptionalMillis(d.completedAt)
+            && d.favorite is bool
+            && isFraction(d.percentage);
+        }
+      }
+
+      // --- Reading sessions: append-only logs --------------------------------
+      match /sessions/{sessionId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && validSession(request.resource.data, sessionId);
+        // Retried uploads of the same session are accepted only if identical.
+        allow update: if isOwner(uid) && request.resource.data == resource.data;
+        // Needed for account deletion. Removing a session never revokes
+        // server-verified achievements.
+        allow delete: if isOwner(uid);
+
+        function validSession(d, id) {
+          return d.keys().hasOnly([
+              'sessionId', 'userId', 'bookId', 'bookTitle', 'startTime', 'endTime',
+              'duration', 'wordsRead', 'startingWpm', 'endingWpm', 'averageWpm',
+              'effectiveWpm', 'startingPosition', 'endingPosition', 'startPercentage',
+              'completionPercentage', 'localDate', 'goalMinutes', 'bookCompleted'
+            ])
+            && d.sessionId == id
+            && d.userId == uid
+            && isString(d.bookId, 128)
+            && isString(d.bookTitle, 160)
+            && d.startTime is int && d.endTime is int
+            && d.endTime >= d.startTime
+            // Not from the future (5 min clock skew allowance).
+            && d.endTime <= request.time.toMillis() + 300000
+            && isIntIn(d.duration, 1, 21600)
+            && isIntIn(d.wordsRead, 0, 600000)
+            // At most 1500 words per minute of reading, plus a small allowance.
+            && d.wordsRead <= d.duration * 25 + 50
+            && isIntIn(d.startingWpm, 50, 1200)
+            && isIntIn(d.endingWpm, 50, 1200)
+            && isIntIn(d.averageWpm, 50, 1200)
+            && isIntIn(d.effectiveWpm, 0, 1500)
+            && isIntIn(d.startingPosition, 0, 10000000)
+            && isIntIn(d.endingPosition, 0, 10000000)
+            && isFraction(d.startPercentage)
+            && isFraction(d.completionPercentage)
+            && d.localDate is string && d.localDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+            && isIntIn(d.goalMinutes, 1, 600)
+            && d.bookCompleted is bool;
+        }
+      }
+
+      // --- Server-authoritative data -------------------------------------------
+      match /achievements/{achievementId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if false;
+      }
+
+      match /statistics/{day} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if false;
+      }
+
+      // Idempotency markers used by Cloud Functions. Never client-accessible.
+      match /processedSessions/{sessionId} {
+        allow read, write: if false;
+      }
+    }
+
+    // --- Public-domain catalogue -----------------------------------------------
+    match /global/catalog/books/{bookId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    // Everything else is denied by default.
+  }
+}
