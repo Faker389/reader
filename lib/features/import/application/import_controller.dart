@@ -7,9 +7,12 @@ import 'package:uuid/uuid.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/errors/app_failure.dart';
 import '../../../core/providers.dart';
+import '../../../core/utils/offload.dart';
 import '../../../core/utils/sanitize.dart';
 import '../../../data/importers/csv_importer.dart';
 import '../../../data/importers/importer_registry.dart';
+import '../../../data/importers/txt_importer.dart';
+import '../../../data/importers/web_article.dart';
 import '../../../data/providers.dart';
 import '../../../domain/models/book.dart';
 import '../../../domain/models/book_content.dart';
@@ -125,6 +128,45 @@ class ImportController extends Notifier<ImportState> {
       return;
     }
     await importBytes(bytes, file.name);
+  }
+
+  Future<void> importPasted({required String title, required String text}) async {
+    state = const ImportProcessing('Pasted article');
+    try {
+      final chapters = await runOffload(() => TxtImporter.parseText(text));
+      if (!ref.mounted) return;
+      final words = chapters.fold<int>(0, (sum, chapter) => sum + chapter.wordCount);
+      if (words < 20) {
+        state = const ImportFailed('Paste a bit more text so there is something to read.');
+        return;
+      }
+      final name = title.trim().isEmpty ? 'Pasted article' : title.trim();
+      state = ImportReview(
+        fileName: name,
+        format: BookFormat.txt,
+        book: _clean(ParsedBook(title: name, author: '', chapters: chapters)),
+      );
+    } on Object catch (e) {
+      if (ref.mounted) state = ImportFailed(_message(e));
+    }
+  }
+
+  Future<void> importLink(String url) async {
+    state = const ImportProcessing('Web article');
+    try {
+      final article = await WebArticle.fetch(url);
+      if (!ref.mounted) return;
+      final chapters = await runOffload(() => TxtImporter.parseText(article.text));
+      if (!ref.mounted) return;
+      final name = article.title.isEmpty ? 'Web article' : article.title;
+      state = ImportReview(
+        fileName: name,
+        format: BookFormat.txt,
+        book: _clean(ParsedBook(title: name, author: '', chapters: chapters)),
+      );
+    } on Object catch (e) {
+      if (ref.mounted) state = ImportFailed(_message(e));
+    }
   }
 
   Future<void> importBytes(Uint8List bytes, String fileName) async {

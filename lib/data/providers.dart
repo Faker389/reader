@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/providers.dart';
@@ -88,6 +90,14 @@ final profileProvider = StreamProvider<UserProfile?>((ref) => ref.watch(profileR
 
 final unlockedAchievementsProvider =
     StreamProvider<Map<String, UnlockedAchievement>>((ref) => ref.watch(achievementRepositoryProvider).watch());
+
+/// Bytes for a file kept in the browser store. Device builds read covers
+/// straight from disk instead.
+final storedBytesProvider = FutureProvider.autoDispose.family<Uint8List?, String>((ref, relative) async {
+  final uid = ref.watch(currentUidProvider);
+  if (uid == null) return null;
+  return ref.watch(fileStoreProvider).forUser(uid).readBytes(relative);
+});
 
 final bookProvider = Provider.family<Book?, String>((ref, id) {
   final books = ref.watch(booksProvider).value;

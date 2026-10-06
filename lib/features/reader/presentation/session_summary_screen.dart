@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../domain/reading/comprehension_quiz.dart';
+import '../../../domain/reading/training_pace.dart';
 import '../../../routing/routes.dart';
 import '../../../services/session_recorder.dart';
 import '../../../theme/app_colors.dart';
@@ -12,6 +15,7 @@ import '../../../widgets/buttons.dart';
 import '../../../widgets/progress.dart';
 import '../../../widgets/section_header.dart';
 import '../../achievements/presentation/achievement_badge.dart';
+import '../../settings/application/settings_controller.dart';
 
 class SessionSummaryScreen extends StatelessWidget {
   const SessionSummaryScreen({required this.summary, super.key});
@@ -97,6 +101,17 @@ class SessionSummaryScreen extends StatelessWidget {
                         ],
                       ),
                     ),
+                    if (summary.trainedToWpm != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        'Training moved your speed to ${summary.trainedToWpm} WPM.',
+                        style: context.text.bodyMedium,
+                      ),
+                    ],
+                    if (summary.questions.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _ComprehensionCard(questions: summary.questions),
+                    ],
                     if (summary.streakAfter > summary.streakBefore) ...[
                       const SizedBox(height: 12),
                       UnlockReveal(
@@ -276,4 +291,119 @@ class _CountMetric extends StatelessWidget {
           ],
         ),
       );
+}
+
+class _ComprehensionCard extends ConsumerStatefulWidget {
+  const _ComprehensionCard({required this.questions});
+
+  final List<ClozeQuestion> questions;
+
+  @override
+  ConsumerState<_ComprehensionCard> createState() => _ComprehensionCardState();
+}
+
+class _ComprehensionCardState extends ConsumerState<_ComprehensionCard> {
+  int _index = 0;
+  int _correct = 0;
+  String? _picked;
+  bool _done = false;
+  int? _movedTo;
+
+  void _pick(String choice) {
+    if (_picked != null) return;
+    setState(() {
+      _picked = choice;
+      if (choice == widget.questions[_index].answer) _correct++;
+    });
+  }
+
+  void _next() {
+    if (_index + 1 >= widget.questions.length) {
+      final settings = ref.read(readerSettingsProvider);
+      int? moved;
+      if (settings.trainingMode) {
+        final next = TrainingPace.fromQuiz(
+          current: settings.defaultWpm,
+          correct: _correct,
+          asked: widget.questions.length,
+        );
+        if (next != settings.defaultWpm) {
+          ref.read(settingsControllerProvider.notifier).updateReader((r) => r.copyWith(defaultWpm: next));
+          moved = next;
+        }
+      }
+      setState(() {
+        _done = true;
+        _movedTo = moved;
+      });
+      return;
+    }
+    setState(() {
+      _index++;
+      _picked = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (_done) {
+      return AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Did that stick?', style: context.text.titleSmall),
+            const SizedBox(height: 8),
+            Text('$_correct of ${widget.questions.length} remembered.', style: context.text.bodyMedium),
+            if (_movedTo != null) ...[
+              const SizedBox(height: 6),
+              Text('Training moved your speed to $_movedTo WPM.', style: context.text.bodySmall),
+            ],
+          ],
+        ),
+      );
+    }
+    final question = widget.questions[_index];
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Did that stick?', style: context.text.titleSmall),
+          const SizedBox(height: 8),
+          Text('${question.before} ____ ${question.after}'.trim(), style: context.text.bodyLarge),
+          const SizedBox(height: 12),
+          for (final choice in question.choices)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: _picked == null ? () => _pick(choice) : null,
+                  child: Text(
+                    choice,
+                    style: TextStyle(
+                      color: _picked == null
+                          ? null
+                          : choice == question.answer
+                              ? c.success
+                              : choice == _picked
+                                  ? c.danger
+                                  : null,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (_picked != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _next,
+                child: Text(_index + 1 == widget.questions.length ? 'See result' : 'Next'),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

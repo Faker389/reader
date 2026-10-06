@@ -4,6 +4,27 @@ enum BookFormat { txt, epub, csv, sample }
 
 enum BookSource { sample, imported }
 
+/// A saved place inside a book, separate from the automatic resume position.
+class BookBookmark {
+  const BookBookmark({required this.wordIndex, required this.label, required this.createdAt});
+
+  final int wordIndex;
+  final String label;
+  final DateTime createdAt;
+
+  JsonMap toJson() => {
+        'wordIndex': wordIndex,
+        'label': label,
+        'createdAt': millis(createdAt),
+      };
+
+  factory BookBookmark.fromJson(JsonMap json) => BookBookmark(
+        wordIndex: json.integer('wordIndex'),
+        label: json.str('label'),
+        createdAt: json.date('createdAt') ?? DateTime.now(),
+      );
+}
+
 /// Book metadata plus the reader's progress. The text itself lives in a
 /// separate local content file and is never uploaded.
 class Book {
@@ -30,6 +51,7 @@ class Book {
     this.favorite = false,
     this.contentAvailable = true,
     this.syncPending = true,
+    this.bookmarks = const [],
   });
 
   final String id;
@@ -59,6 +81,12 @@ class Book {
   /// been imported on this one.
   final bool contentAvailable;
   final bool syncPending;
+
+  /// Device-only places. Not uploaded, because they are not in the remote schema.
+  final List<BookBookmark> bookmarks;
+
+  bool hasBookmarkNear(int wordIndex, {int window = 8}) =>
+      bookmarks.any((b) => (b.wordIndex - wordIndex).abs() <= window);
 
   bool get isSample => source == BookSource.sample;
   bool get isStarted => currentWordIndex > 0 || sessionsCount > 0;
@@ -99,6 +127,7 @@ class Book {
     bool? syncPending,
     int? totalWords,
     int? chapterCount,
+    List<BookBookmark>? bookmarks,
   }) {
     return Book(
       id: id,
@@ -123,6 +152,7 @@ class Book {
       favorite: favorite ?? this.favorite,
       contentAvailable: contentAvailable ?? this.contentAvailable,
       syncPending: syncPending ?? true,
+      bookmarks: bookmarks ?? this.bookmarks,
     );
   }
 
@@ -132,6 +162,7 @@ class Book {
         'coverPath': coverPath,
         'contentAvailable': contentAvailable,
         'syncPending': syncPending,
+        'bookmarks': [for (final bookmark in bookmarks) bookmark.toJson()],
       };
 
   /// Metadata that is safe to synchronise. Contains no book text.
@@ -183,6 +214,7 @@ class Book {
       favorite: json.boolean('favorite'),
       contentAvailable: json.boolean('contentAvailable', true),
       syncPending: json.boolean('syncPending', true),
+      bookmarks: [for (final item in json.mapList('bookmarks')) BookBookmark.fromJson(item)],
     );
   }
 }

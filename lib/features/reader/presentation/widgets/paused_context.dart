@@ -30,25 +30,23 @@ class PausedContext extends StatelessWidget {
   }
 
   Widget _buildText(BuildContext context, int position) {
-    final words = engine.content.words;
-    const span = ReaderConstants.contextWordsWhenPaused;
-    final start = (position - span).clamp(0, words.length);
-    final end = (position + span + 1).clamp(0, words.length);
-    final style = Theme.of(context).textTheme.bodyLarge!.copyWith(color: theme.chromeMuted, height: 1.6);
+    final content = engine.content;
+    if (content.isEmpty) return const SizedBox.shrink();
+    final start = content.sentenceStart(position);
+    final end = content.sentenceEnd(position);
+    final style = Theme.of(context).textTheme.bodyLarge!.copyWith(color: theme.chromeMuted, height: 1.55);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 28),
       child: Text.rich(
         TextSpan(children: [
-          if (start > 0) const TextSpan(text: '… '),
           for (var i = start; i < end; i++)
             TextSpan(
-              text: '${words[i]} ',
+              text: i == end - 1 ? content.words[i] : '${content.words[i]} ',
               style: i == position ? TextStyle(color: theme.word, fontWeight: FontWeight.w700) : null,
             ),
-          if (end < words.length) const TextSpan(text: '…'),
         ]),
         textAlign: TextAlign.center,
-        maxLines: 3,
+        maxLines: 6,
         overflow: TextOverflow.ellipsis,
         style: style,
       ),

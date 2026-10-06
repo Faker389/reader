@@ -30,14 +30,15 @@ Future<AppEnvironment> bootstrap() async {
     return true;
   };
 
-  final results = await Future.wait<Object>([LocalDatabase.open(), FileStore.open()]);
+  final database = await LocalDatabase.open();
+  final files = await FileStore.open();
   final notifications = NotificationService();
   unawaited(notifications.initialise().catchError((Object e) => debugPrint('Notifications unavailable: $e')));
 
   return AppEnvironment(
     firebaseAvailable: firebaseAvailable,
-    database: results[0] as LocalDatabase,
-    files: results[1] as FileStore,
+    database: database,
+    files: files,
     analytics: analytics,
     crash: crash,
     notifications: notifications,

@@ -7,6 +7,8 @@ import '../data/providers.dart';
 import '../domain/models/achievement.dart';
 import '../domain/models/book.dart';
 import '../domain/models/reading_session.dart';
+import '../domain/reading/comprehension_quiz.dart';
+import '../domain/reading/training_pace.dart';
 import '../domain/stats/reading_stats.dart';
 import '../features/settings/application/settings_controller.dart';
 import '../features/statistics/application/stats_providers.dart';
@@ -29,6 +31,8 @@ class SessionSummary {
     required this.streakAfter,
     required this.newAchievements,
     required this.bookCompleted,
+    this.questions = const [],
+    this.trainedToWpm,
   });
 
   final ReadingSession session;
@@ -42,6 +46,26 @@ class SessionSummary {
   final int streakAfter;
   final List<AchievementDefinition> newAchievements;
   final bool bookCompleted;
+  final List<ClozeQuestion> questions;
+
+  /// The saved speed after training adjusted it, when it moved.
+  final int? trainedToWpm;
+
+  SessionSummary copyWith({List<ClozeQuestion>? questions, int? trainedToWpm}) => SessionSummary(
+        session: session,
+        book: book,
+        progressBefore: progressBefore,
+        progressAfter: progressAfter,
+        todaySecondsBefore: todaySecondsBefore,
+        todaySecondsAfter: todaySecondsAfter,
+        goalMinutes: goalMinutes,
+        streakBefore: streakBefore,
+        streakAfter: streakAfter,
+        newAchievements: newAchievements,
+        bookCompleted: bookCompleted,
+        questions: questions ?? this.questions,
+        trainedToWpm: trainedToWpm ?? this.trainedToWpm,
+      );
 
   bool get goalReachedThisSession =>
       todaySecondsBefore < goalMinutes * 60 && todaySecondsAfter >= goalMinutes * 60;
@@ -127,6 +151,19 @@ class SessionRecorder {
     final statsAfter = _computeStats();
     await profile.applyStats(statsAfter);
     await profile.setCurrentWpm(draft.currentWpm);
+    int? trainedTo;
+    final settings = _ref.read(readerSettingsProvider);
+    if (settings.trainingMode) {
+      final next = TrainingPace.fromSession(
+        current: settings.defaultWpm,
+        wordsRead: draft.wordsRead,
+        retraces: draft.retraces,
+      );
+      if (next != settings.defaultWpm) {
+        await _ref.read(settingsControllerProvider.notifier).updateReader((r) => r.copyWith(defaultWpm: next));
+        trainedTo = next;
+      }
+    }
     final fresh = await _ref.read(achievementRepositoryProvider).evaluate(statsAfter);
     await sessions.clearDraft();
 
@@ -155,6 +192,7 @@ class SessionRecorder {
       streakAfter: statsAfter.streak.current,
       newAchievements: fresh,
       bookCompleted: session.bookCompleted,
+      trainedToWpm: trainedTo,
     );
   }
 

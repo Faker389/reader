@@ -1,7 +1,7 @@
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/utils/offload.dart';
 import '../../core/errors/app_failure.dart';
 import '../../domain/models/book_content.dart';
 import 'book_importer.dart';
@@ -39,12 +39,12 @@ class ImporterRegistry {
   Future<ParsedBook> parse(Uint8List bytes, String fileName) {
     _checkSize(bytes);
     final importer = forFile(fileName);
-    return Isolate.run(() => importer.parse(bytes, fileName: fileName));
+    return runOffload(() => importer.parse(bytes, fileName: fileName));
   }
 
   Future<CsvInspection> inspectCsv(Uint8List bytes) {
     _checkSize(bytes);
-    return Isolate.run(() => const CsvImporter().inspect(bytes));
+    return runOffload(() => const CsvImporter().inspect(bytes));
   }
 
   Future<ParsedBook> parseCsvColumn(
@@ -53,7 +53,7 @@ class ImporterRegistry {
     required int column,
     required bool hasHeader,
   }) =>
-      Isolate.run(
+      runOffload(
         () => const CsvImporter().parseColumn(bytes, fileName: fileName, column: column, hasHeader: hasHeader),
       );
 

@@ -53,6 +53,9 @@ class ReaderSettings {
     this.showContextWhenPaused = true,
     this.smoothSpeedChanges = true,
     this.themeId = ReaderThemeId.midnight,
+    this.chunkSize = 1,
+    this.trainingMode = false,
+    this.readAloud = false,
   });
 
   final int defaultWpm;
@@ -74,6 +77,17 @@ class ReaderSettings {
   final bool showContextWhenPaused;
   final bool smoothSpeedChanges;
   final ReaderThemeId themeId;
+
+  /// How many words appear together. One is classic RSVP; two or three keep
+  /// the same focal point while showing a short phrase.
+  final int chunkSize;
+
+  /// Gently raises the saved speed after easy sessions and lowers it after
+  /// ones with a lot of rewinding.
+  final bool trainingMode;
+
+  /// Speaks the words on screen while they are up long enough to hear.
+  final bool readAloud;
 
   bool get usesStandardTiming =>
       !punctuationPauses && !sentencePauses && !paragraphPauses && !longWordAdjustment;
@@ -98,6 +112,9 @@ class ReaderSettings {
     bool? showContextWhenPaused,
     bool? smoothSpeedChanges,
     ReaderThemeId? themeId,
+    int? chunkSize,
+    bool? trainingMode,
+    bool? readAloud,
   }) {
     return ReaderSettings(
       defaultWpm: defaultWpm ?? this.defaultWpm,
@@ -119,6 +136,9 @@ class ReaderSettings {
       showContextWhenPaused: showContextWhenPaused ?? this.showContextWhenPaused,
       smoothSpeedChanges: smoothSpeedChanges ?? this.smoothSpeedChanges,
       themeId: themeId ?? this.themeId,
+      chunkSize: chunkSize ?? this.chunkSize,
+      trainingMode: trainingMode ?? this.trainingMode,
+      readAloud: readAloud ?? this.readAloud,
     );
   }
 
@@ -150,6 +170,9 @@ class ReaderSettings {
         'showContextWhenPaused': showContextWhenPaused,
         'smoothSpeedChanges': smoothSpeedChanges,
         'themeId': themeId.name,
+        'chunkSize': chunkSize,
+        'trainingMode': trainingMode,
+        'readAloud': readAloud,
       };
 
   factory ReaderSettings.fromJson(JsonMap json) {
@@ -182,6 +205,9 @@ class ReaderSettings {
           json.boolean('showContextWhenPaused', d.showContextWhenPaused),
       smoothSpeedChanges: json.boolean('smoothSpeedChanges', d.smoothSpeedChanges),
       themeId: json.enumValue('themeId', ReaderThemeId.values, d.themeId),
+      chunkSize: json.integer('chunkSize', d.chunkSize).clamp(1, 3),
+      trainingMode: json.boolean('trainingMode', d.trainingMode),
+      readAloud: json.boolean('readAloud', d.readAloud),
     );
   }
 }

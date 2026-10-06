@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -22,9 +20,10 @@ class BookCover extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final height = width / aspectRatio;
     final radius = BorderRadius.circular(width * 0.07);
-    final File? file = ref.watch(bookRepositoryProvider).coverFile(book);
+    final file = ref.watch(bookRepositoryProvider).coverFile(book);
+    final relative = book.coverPath;
 
-    Widget cover = file != null
+    final Widget image = file != null
         ? Image.file(
             file,
             width: width,
@@ -33,9 +32,11 @@ class BookCover extends ConsumerWidget {
             cacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
             errorBuilder: (_, __, ___) => GeneratedCover(book: book, width: width),
           )
-        : GeneratedCover(book: book, width: width);
+        : relative != null
+            ? _StoredCover(book: book, relative: relative, width: width, height: height)
+            : GeneratedCover(book: book, width: width);
 
-    cover = Container(
+    final cover = Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
@@ -44,7 +45,7 @@ class BookCover extends ConsumerWidget {
           BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: width * 0.18, offset: Offset(0, width * 0.08)),
         ],
       ),
-      child: ClipRRect(borderRadius: radius, child: cover),
+      child: ClipRRect(borderRadius: radius, child: image),
     );
 
     return Semantics(
@@ -154,6 +155,28 @@ class GeneratedCover extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _StoredCover extends ConsumerWidget {
+  const _StoredCover({required this.book, required this.relative, required this.width, required this.height});
+
+  final Book book;
+  final String relative;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bytes = ref.watch(storedBytesProvider(relative)).asData?.value;
+    if (bytes == null) return GeneratedCover(book: book, width: width);
+    return Image.memory(
+      bytes,
+      width: width,
+      height: height,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => GeneratedCover(book: book, width: width),
     );
   }
 }

@@ -13,6 +13,7 @@ import '../../../widgets/motion.dart';
 import '../../../widgets/pressable.dart';
 import '../../settings/application/settings_controller.dart';
 import 'rsvp_demo.dart';
+import 'speed_calibration.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -23,7 +24,7 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   static const int _introPages = 4;
-  static const int _pageCount = _introPages + 2;
+  static const int _pageCount = _introPages + 3;
 
   final PageController _pages = PageController();
   int _index = 0;
@@ -169,12 +170,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                                           'Adjust it any time while reading.',
                                       wpm: choices.startingWpm,
                                       fontSize: 34,
-                                      playing: _index == _pageCount - 1,
+                                      playing: _index == _introPages + 1,
                                     ),
                                   ],
                                 ),
                               ),
                             ],
+                          ),
+                          SpeedCalibration(
+                            active: _index == _introPages + 2,
+                            onPace: (wpm) => ref.read(onboardingProvider.notifier).setStartingWpm(wpm),
                           ),
                         ],
                       ),

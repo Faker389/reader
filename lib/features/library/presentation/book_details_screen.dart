@@ -7,7 +7,9 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/utils/sanitize.dart';
 import '../../../data/providers.dart';
 import '../../../domain/models/book.dart';
+import '../../../domain/models/reading_session.dart';
 import '../../../domain/models/book_content.dart';
+import '../../../domain/reading/reading_pace.dart';
 import '../../../routing/routes.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/app_card.dart';
@@ -16,7 +18,15 @@ import '../../../widgets/buttons.dart';
 import '../../../widgets/progress.dart';
 import '../../../widgets/states.dart';
 import '../../settings/application/settings_controller.dart';
+import '../../statistics/application/stats_providers.dart';
 import 'widgets/book_widgets.dart';
+
+String _finishLine(Book book, int wpm, int minutes) {
+  final days = ReadingPace.daysRemaining(wordsRemaining: book.wordsRemaining, wpm: wpm, minutesPerDay: minutes);
+  if (days == null || days <= 0) return 'You could finish this today.';
+  final date = ReadingPace.finishOn(wordsRemaining: book.wordsRemaining, wpm: wpm, minutesPerDay: minutes);
+  return 'At $minutes minutes a day, this finishes around ${Formatters.shortDate(date!)}.';
+}
 
 final _bookContentProvider = FutureProvider.autoDispose.family<BookContent, String>(
   (ref, id) => ref.watch(bookRepositoryProvider).loadContent(id),
@@ -44,6 +54,11 @@ class BookDetailsScreen extends ConsumerWidget {
     }
     final c = context.colors;
     final wpm = ref.watch(readerSettingsProvider.select((r) => r.defaultWpm));
+    final goalMinutes = ref.watch(goalMinutesProvider);
+    final sessions = [
+      for (final session in ref.watch(sessionsProvider).value ?? const <ReadingSession>[])
+        if (session.bookId == book.id) session,
+    ]..sort((a, b) => b.startTime.compareTo(a.startTime));
     final repo = ref.read(bookRepositoryProvider);
     final wide = MediaQuery.sizeOf(context).width >= LayoutConstants.tabletBreakpoint;
 
@@ -137,6 +152,38 @@ class BookDetailsScreen extends ConsumerWidget {
             ),
           ],
         ),
+        if (!book.completed && book.wordsRemaining > 0) ...[
+          const SizedBox(height: 16),
+          Text(_finishLine(book, wpm, goalMinutes), style: context.text.bodyMedium),
+        ],
+        if (book.bookmarks.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          Text('Saved places', style: context.text.titleLarge),
+          const SizedBox(height: 8),
+          for (final bookmark in book.bookmarks)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.bookmark_rounded, color: c.accent),
+              title: Text(bookmark.label, maxLines: 2, overflow: TextOverflow.ellipsis),
+              onTap: book.contentAvailable
+                  ? () => context.push(Routes.reader(book.id, start: bookmark.wordIndex))
+                  : null,
+            ),
+        ],
+        if (sessions.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          Text('Recent sessions', style: context.text.titleLarge),
+          const SizedBox(height: 8),
+          for (final session in sessions.take(5))
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(Formatters.relativeDate(session.startTime)),
+              subtitle: Text(
+                '${Formatters.compact(session.wordsRead)} words · ${session.averageWpm} WPM · '
+                '${Formatters.duration(Duration(seconds: session.durationSeconds))}',
+              ),
+            ),
+        ],
         if (book.sessionsCount > 0) ...[
           const SizedBox(height: 12),
           Row(

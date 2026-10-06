@@ -70,6 +70,25 @@ class BookContent {
     }
     return i + 1;
   }
+
+  /// Index just after the sentence containing [wordIndex].
+  int sentenceEnd(int wordIndex) {
+    if (flags.isEmpty) return 0;
+    final start = wordIndex.clamp(0, flags.length - 1);
+    var i = start;
+    while (i < flags.length - 1) {
+      if (flags[i] & (WordFlags.sentenceEnd | WordFlags.paragraphEnd) != 0) return i + 1;
+      i++;
+    }
+    return flags.length;
+  }
+
+  String sentenceText(int wordIndex) {
+    if (words.isEmpty) return '';
+    final start = sentenceStart(wordIndex);
+    final end = sentenceEnd(wordIndex);
+    return words.sublist(start, end).join(' ');
+  }
 }
 
 class ParsedChapter {

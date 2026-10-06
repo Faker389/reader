@@ -7,7 +7,8 @@ plugins {
 
 android {
     namespace = "com.example.apka"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_tts compiles against Android SDK 36.
+    compileSdk = maxOf(36, flutter.compileSdkVersion)
     // Firebase and other plugins require NDK 27.
     ndkVersion = "27.0.12077973"
 
@@ -26,8 +27,8 @@ android {
         // TODO(release): Choose your own application id (e.g. app.fovea.reader) and
         // use the same id when registering the Android app in Firebase.
         applicationId = "com.example.apka"
-        // Firebase Auth and Firestore require API 23+.
-        minSdk = maxOf(23, flutter.minSdkVersion)
+        // Firebase needs API 23+. Reading words aloud needs API 24+.
+        minSdk = maxOf(24, flutter.minSdkVersion)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

@@ -23,7 +23,11 @@ class ImportScreen extends ConsumerWidget {
     final controller = ref.read(importControllerProvider.notifier);
 
     final Widget body = switch (state) {
-      ImportIdle() => _PickView(onPick: controller.pickFile),
+      ImportIdle() => _PickView(
+          onPick: controller.pickFile,
+          onPaste: (title, text) => controller.importPasted(title: title, text: text),
+          onLink: controller.importLink,
+        ),
       ImportProcessing(:final fileName) => _ProcessingView(fileName: fileName),
       final ImportCsvChoice s => _CsvChoiceView(state: s),
       final ImportReview s => _ReviewView(key: ValueKey(s.fileName), state: s),
@@ -67,9 +71,11 @@ class ImportScreen extends ConsumerWidget {
 }
 
 class _PickView extends StatelessWidget {
-  const _PickView({required this.onPick});
+  const _PickView({required this.onPick, required this.onPaste, required this.onLink});
 
   final VoidCallback onPick;
+  final void Function(String title, String text) onPaste;
+  final ValueChanged<String> onLink;
 
   @override
   Widget build(BuildContext context) {
@@ -129,8 +135,63 @@ class _PickView extends StatelessWidget {
         format('PDF', 'Coming soon.', soon: true),
         const SizedBox(height: 20),
         PrimaryButton(label: 'Browse files', icon: Icons.folder_open_rounded, onPressed: onPick),
+        const SizedBox(height: 10),
+        SecondaryButton(
+          label: 'Paste text or a link',
+          icon: Icons.content_paste_rounded,
+          onPressed: () => _pasteDialog(context),
+        ),
       ],
     );
+  }
+
+  Future<void> _pasteDialog(BuildContext context) async {
+    final title = TextEditingController();
+    final body = TextEditingController();
+    final link = TextEditingController();
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add an article'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: link,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(labelText: 'Link'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: title,
+                decoration: const InputDecoration(labelText: 'Title'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: body,
+                minLines: 5,
+                maxLines: 10,
+                decoration: const InputDecoration(labelText: 'Article text', alignLabelWithHint: true),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, 'link'), child: const Text('Use link')),
+          TextButton(onPressed: () => Navigator.pop(context, 'text'), child: const Text('Use text')),
+        ],
+      ),
+    );
+    final pastedTitle = title.text;
+    final pastedBody = body.text;
+    final pastedLink = link.text;
+    title.dispose();
+    body.dispose();
+    link.dispose();
+    if (choice == 'link' && pastedLink.trim().isNotEmpty) onLink(pastedLink.trim());
+    if (choice == 'text' && pastedBody.trim().isNotEmpty) onPaste(pastedTitle, pastedBody);
   }
 }
 

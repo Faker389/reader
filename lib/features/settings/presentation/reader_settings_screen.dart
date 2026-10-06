@@ -72,6 +72,23 @@ class ReaderSettingsScreen extends ConsumerWidget {
                           onChanged: (w) => update((r) => r.copyWith(weight: w)),
                         ),
                         const SizedBox(height: 16),
+                        Text('Words at a time', style: context.text.titleSmall),
+                        const SizedBox(height: 8),
+                        SegmentedPills<int>(
+                          options: const [
+                            SegmentOption(1, '1'),
+                            SegmentOption(2, '2'),
+                            SegmentOption(3, '3'),
+                          ],
+                          selected: s.chunkSize,
+                          onChanged: (v) => update((r) => r.copyWith(chunkSize: v)),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Two or three words stay on the same focal point, so the sentence is easier to follow.',
+                          style: context.text.bodySmall,
+                        ),
+                        const SizedBox(height: 16),
                         Text('Focal letter', style: context.text.titleSmall),
                         const SizedBox(height: 8),
                         SegmentedPills<FocalMode>(
@@ -171,6 +188,18 @@ class ReaderSettingsScreen extends ConsumerWidget {
                 title: 'Behaviour',
                 children: [
                   SettingsSwitch(
+                    title: 'Read the words aloud',
+                    subtitle: 'Speaks the words on screen. Past about 300 words per minute they move on before they can be said, so the voice stays quiet instead of falling behind.',
+                    value: s.readAloud,
+                    onChanged: (v) => update((r) => r.copyWith(readAloud: v)),
+                  ),
+                  SettingsSwitch(
+                    title: 'Training',
+                    subtitle: 'Ease the saved speed up after calm sessions, and down after a lot of rewinding',
+                    value: s.trainingMode,
+                    onChanged: (v) => update((r) => r.copyWith(trainingMode: v)),
+                  ),
+                  SettingsSwitch(
                     title: 'Continue into next chapter',
                     subtitle: 'Off: pause at the end of each chapter',
                     value: s.autoStartNextChapter,
@@ -237,7 +266,7 @@ class _Preview extends StatefulWidget {
 }
 
 class _PreviewState extends State<_Preview> {
-  static const _words = ['Reading'];
+  static const _words = ['Reading', 'in', 'phrases'];
   final ValueNotifier<int> _position = ValueNotifier(0);
 
   @override
@@ -263,6 +292,7 @@ class _PreviewState extends State<_Preview> {
       child: RsvpWordView(
         words: _words,
         position: _position,
+        chunkSize: s.chunkSize,
         height: 120,
         style: RsvpWordStyle(
           text: AppTypography.readerStyle(

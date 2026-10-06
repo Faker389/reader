@@ -60,6 +60,16 @@ class ReaderQuickSettings extends ConsumerWidget {
             ),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
+              title: const Text('Read the words aloud'),
+              subtitle: Text(
+                'Quiet once the pace is too fast to say each word',
+                style: context.text.bodySmall,
+              ),
+              value: s.readAloud,
+              onChanged: (v) => controller.updateReader((r) => r.copyWith(readAloud: v)),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
               title: const Text('Show context when paused'),
               value: s.showContextWhenPaused,
               onChanged: (v) => controller.updateReader((r) => r.copyWith(showContextWhenPaused: v)),

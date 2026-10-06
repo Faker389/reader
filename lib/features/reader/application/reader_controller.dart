@@ -14,6 +14,7 @@ import '../../../data/repositories/session_repository.dart';
 import '../../../domain/models/book.dart';
 import '../../../domain/models/reader_settings.dart';
 import '../../../domain/models/reading_session.dart';
+import '../../../domain/reading/comprehension_quiz.dart';
 import '../../../domain/reading/word_timing.dart';
 import '../../../services/analytics_service.dart';
 import '../../../services/session_recorder.dart';
@@ -51,9 +52,10 @@ class ReaderState {
   final int? chapterBreak;
   final bool finished;
 
-  ReaderState copyWith({int? chapterBreak, bool clearChapterBreak = false, bool? finished}) => ReaderState._(
+  ReaderState copyWith({Book? book, int? chapterBreak, bool clearChapterBreak = false, bool? finished}) =>
+      ReaderState._(
         status: status,
-        book: book,
+        book: book ?? this.book,
         engine: engine,
         error: error,
         chapterBreak: clearChapterBreak ? null : (chapterBreak ?? this.chapterBreak),
@@ -133,6 +135,7 @@ class ReaderController extends Notifier<ReaderState> {
         timing: WordTimingConfig.fromSettings(settings),
         smoothSpeedChanges: settings.smoothSpeedChanges,
         pauseAtChapterEnd: !settings.autoStartNextChapter,
+        chunkSize: settings.chunkSize,
       )
         ..onFinished = _onFinished
         ..onChapterEnd = _onChapterEnd;
@@ -163,6 +166,19 @@ class ReaderController extends Notifier<ReaderState> {
   void pause() => _engine?.pause();
 
   void skip(int words) => _engine?.skip(words);
+
+  void replaySentence() => _engine?.replaySentence();
+
+  Future<void> toggleBookmark() async {
+    final engine = _engine;
+    final books = _books;
+    if (engine == null || books == null || engine.content.isEmpty) return;
+    final index = engine.content.sentenceStart(engine.position.value);
+    final label = engine.content.sentenceText(index);
+    final short = label.length > 90 ? '${label.substring(0, 87)}…' : label;
+    final updated = await books.toggleBookmark(args.bookId, wordIndex: index, label: short);
+    if (updated != null && ref.mounted) state = state.copyWith(book: updated);
+  }
 
   void seek(int index) {
     _engine?.seek(index);
@@ -235,11 +251,18 @@ class ReaderController extends Notifier<ReaderState> {
         await ref.read(bookRepositoryProvider).pushProgress(args.bookId);
         return null;
       }
-      return await ref.read(sessionRecorderProvider).record(
+      final summary = await ref.read(sessionRecorderProvider).record(
             draft,
             chapter: chapter,
             finishedBook: engine.isFinished,
           );
+      if (summary == null) return null;
+      final questions = ComprehensionQuiz.build(
+        engine.content.words,
+        draft.startingPosition,
+        engine.position.value,
+      );
+      return summary.copyWith(questions: questions);
     } on Object catch (e, s) {
       ref.read(crashReporterProvider).recordNonFatal(e, s, reason: 'finish session');
       return null;
@@ -296,7 +319,8 @@ class ReaderController extends Notifier<ReaderState> {
     engine
       ..updateTiming(WordTimingConfig.fromSettings(settings))
       ..smoothSpeedChanges = settings.smoothSpeedChanges
-      ..pauseAtChapterEnd = !settings.autoStartNextChapter;
+      ..pauseAtChapterEnd = !settings.autoStartNextChapter
+      ..setChunkSize(settings.chunkSize);
     if (engine.isPlaying) _setWakelock(settings.keepScreenAwake);
   }
 
@@ -322,6 +346,7 @@ class ReaderController extends Notifier<ReaderState> {
       currentPosition: engine.position.value,
       startPercentage: session.startPercentage,
       currentPercentage: total <= 1 ? 0 : engine.position.value / (total - 1),
+      retraces: engine.retraces,
     );
   }
 

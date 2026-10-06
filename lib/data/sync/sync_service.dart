@@ -149,6 +149,7 @@ class SyncService {
           'coverPath': local.coverPath,
           'contentAvailable': local.contentAvailable,
           'syncPending': false,
+          'bookmarks': [for (final bookmark in local.bookmarks) bookmark.toJson()],
         }));
       }
     }

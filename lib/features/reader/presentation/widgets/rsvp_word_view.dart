@@ -48,6 +48,7 @@ class RsvpWordView extends StatelessWidget {
     required this.position,
     required this.style,
     required this.height,
+    this.chunkSize = 1,
     this.anchor = defaultAnchor,
     super.key,
   });
@@ -60,6 +61,7 @@ class RsvpWordView extends StatelessWidget {
   final ValueListenable<int> position;
   final RsvpWordStyle style;
   final double height;
+  final int chunkSize;
   final double anchor;
 
   @override
@@ -76,6 +78,7 @@ class RsvpWordView extends StatelessWidget {
               words: words,
               position: position,
               style: style,
+              chunkSize: chunkSize,
               anchor: anchor,
               textScaler: MediaQuery.textScalerOf(context),
             ),
@@ -91,6 +94,7 @@ class RsvpWordPainter extends CustomPainter {
     required this.words,
     required this.position,
     required this.style,
+    required this.chunkSize,
     required this.anchor,
     required this.textScaler,
   }) : super(repaint: position);
@@ -98,6 +102,7 @@ class RsvpWordPainter extends CustomPainter {
   final List<String> words;
   final ValueListenable<int> position;
   final RsvpWordStyle style;
+  final int chunkSize;
   final double anchor;
   final TextScaler textScaler;
 
@@ -127,11 +132,11 @@ class RsvpWordPainter extends CustomPainter {
     if (words.isEmpty) return;
 
     final index = position.value.clamp(0, words.length - 1);
-    final word = words[index];
-    final focalIndex = FocalPoint.indexFor(word);
-    final focalEnd = focalIndex + FocalPoint.focalLength(word, focalIndex);
+    final phrase = _phrase(index);
+    final focalIndex = phrase.focalIndex;
+    final focalEnd = phrase.focalEnd;
 
-    _layout(word, focalIndex, focalEnd, 1);
+    _layout(phrase.text, focalIndex, focalEnd, 1);
 
     final leftRoom = focalX - _horizontalPadding;
     final rightRoom = size.width - focalX - _horizontalPadding;
@@ -143,13 +148,33 @@ class RsvpWordPainter extends CustomPainter {
         rightRoom / math.max(1, _suffix.width + halfFocal),
       ),
     );
-    if (scale < 1) _layout(word, focalIndex, focalEnd, scale);
+    if (scale < 1) _layout(phrase.text, focalIndex, focalEnd, scale);
 
     final focalLeft = focalX - _focal.width / 2;
     final top = centerY - _focal.height / 2;
     _prefix.paint(canvas, Offset(focalLeft - _prefix.width, top));
     _focal.paint(canvas, Offset(focalLeft, top));
     _suffix.paint(canvas, Offset(focalLeft + _focal.width, top));
+  }
+
+  ({String text, int focalIndex, int focalEnd}) _phrase(int index) {
+    final count = chunkSize.clamp(1, 3);
+    final end = math.min(words.length, index + count);
+    final slice = words.sublist(index, end);
+    if (slice.isEmpty) return (text: '', focalIndex: 0, focalEnd: 0);
+    final mid = slice.length ~/ 2;
+    var focalChar = 0;
+    for (var i = 0; i < mid; i++) {
+      focalChar += slice[i].length + 1;
+    }
+    final focalWord = slice[mid];
+    final local = FocalPoint.indexFor(focalWord);
+    final focalIndex = focalChar + local;
+    return (
+      text: slice.join(' '),
+      focalIndex: focalIndex,
+      focalEnd: focalIndex + FocalPoint.focalLength(focalWord, local),
+    );
   }
 
   void _layout(String word, int focalIndex, int focalEnd, double scale) {
@@ -189,5 +214,9 @@ class RsvpWordPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(RsvpWordPainter old) =>
-      old.words != words || old.style != style || old.anchor != anchor || old.textScaler != textScaler;
+      old.words != words ||
+      old.style != style ||
+      old.chunkSize != chunkSize ||
+      old.anchor != anchor ||
+      old.textScaler != textScaler;
 }

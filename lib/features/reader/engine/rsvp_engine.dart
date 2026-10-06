@@ -28,6 +28,7 @@ class RsvpEngine {
     WordTimingConfig timing = const WordTimingConfig(),
     this.smoothSpeedChanges = true,
     this.pauseAtChapterEnd = false,
+    int chunkSize = 1,
     MicrosClock? clock,
     TimerFactory? timerFactory,
   })  : _content = content,
@@ -39,7 +40,8 @@ class RsvpEngine {
         ),
         playing = ValueNotifier<bool>(false),
         wpm = ValueNotifier<int>(_clampWpm(wpm)),
-        _effectiveWpm = _clampWpm(wpm).toDouble();
+        _effectiveWpm = _clampWpm(wpm).toDouble(),
+        _chunkSize = chunkSize.clamp(1, 3);
 
   static MicrosClock _defaultClock() {
     final stopwatch = Stopwatch()..start();
@@ -56,6 +58,7 @@ class RsvpEngine {
 
   bool smoothSpeedChanges;
   bool pauseAtChapterEnd;
+  int _chunkSize;
 
   /// Index of the word currently displayed.
   final ValueNotifier<int> position;
@@ -84,6 +87,7 @@ class RsvpEngine {
   int _lastSample = 0;
   double _wpmIntegral = 0;
   int _sampledMicros = 0;
+  int _retraces = 0;
 
   BookContent get content => _content;
   bool get isFinished => _finished;
@@ -97,6 +101,17 @@ class RsvpEngine {
 
   /// Words that were fully displayed during playback.
   int get wordsAdvanced => _wordsAdvanced;
+
+  /// Times the reader jumped backward: a skip, a seek, or a sentence replay.
+  int get retraces => _retraces;
+
+  int get chunkSize => _chunkSize;
+
+  /// How long the chunk at [index] stays on screen, in microseconds.
+  int displayMicrosAt(int index) {
+    if (index < 0 || index >= _content.length) return 0;
+    return _chunkDuration(index);
+  }
 
   /// Time-weighted average of the selected speed while playing.
   int get averageWpm {
@@ -115,7 +130,7 @@ class RsvpEngine {
     _effectiveWpm = wpm.value.toDouble();
     _warmupRemaining = smoothSpeedChanges ? ReaderConstants.resumeWarmupWords : 0;
     playing.value = true;
-    _deadline = now + _durationOf(position.value);
+    _deadline = now + _chunkDuration(position.value);
     _arm(now);
   }
 
@@ -130,17 +145,37 @@ class RsvpEngine {
   void seek(int index) {
     if (_disposed || _content.isEmpty) return;
     final target = index.clamp(0, _content.length - 1);
+    if (target < position.value) _retraces++;
     _finished = false;
     position.value = target;
     if (playing.value) {
       final now = _clock();
       _warmupRemaining = smoothSpeedChanges ? ReaderConstants.resumeWarmupWords ~/ 2 : 0;
-      _deadline = now + _durationOf(target);
+      _deadline = now + _chunkDuration(target);
       _arm(now);
     }
   }
 
   void skip(int delta) => seek(position.value + delta);
+
+  /// Jumps to the first word of the sentence on screen. If that word is
+  /// already showing, jumps to the sentence before it.
+  void replaySentence() {
+    if (_content.isEmpty) return;
+    final here = position.value;
+    final start = _content.sentenceStart(here);
+    if (start < here) {
+      seek(start);
+      return;
+    }
+    if (start > 0) seek(_content.sentenceStart(start - 1));
+  }
+
+  void setChunkSize(int value) {
+    final next = value.clamp(1, 3);
+    if (next == _chunkSize) return;
+    _chunkSize = next;
+  }
 
   void setWpm(int value) {
     final clamped = _clampWpm(value);
@@ -174,9 +209,10 @@ class RsvpEngine {
     if (_disposed || !playing.value) return;
     final now = _clock();
     _sample(now);
-    _wordsAdvanced++;
+    final shown = _shownCount(position.value);
+    _wordsAdvanced += shown;
 
-    final next = position.value + 1;
+    final next = position.value + shown;
     if (next >= _content.length) {
       _finished = true;
       _stop(now);
@@ -195,7 +231,7 @@ class RsvpEngine {
     if (_warmupRemaining > 0) _warmupRemaining--;
     _rampTowardsTarget();
 
-    final duration = _durationOf(next);
+    final duration = _chunkDuration(next);
     _deadline += duration;
     final earliest = now + (duration * ReaderConstants.minDisplayFraction).round();
     if (_deadline < earliest) _deadline = earliest;
@@ -227,6 +263,28 @@ class RsvpEngine {
     }
     final gap = target - _effectiveWpm;
     _effectiveWpm = gap.abs() < 1 ? target : _effectiveWpm + gap * ReaderConstants.wpmRampFactor;
+  }
+
+  /// Words included in the chunk currently on screen.
+  int _shownCount(int index) {
+    final room = _content.length - index;
+    if (room <= 0) return 1;
+    final count = math.min(_chunkSize, room);
+    if (pauseAtChapterEnd) {
+      for (var i = 1; i < count; i++) {
+        if (_content.isChapterStart(index + i)) return i;
+      }
+    }
+    return count;
+  }
+
+  int _chunkDuration(int index) {
+    final count = _shownCount(index);
+    var total = 0;
+    for (var i = 0; i < count; i++) {
+      total += _durationOf(index + i);
+    }
+    return total;
   }
 
   int _durationOf(int index) {

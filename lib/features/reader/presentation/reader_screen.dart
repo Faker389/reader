@@ -6,10 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../domain/models/book.dart';
 import '../../../domain/models/reader_settings.dart';
+import '../../../domain/reading/voice_pace.dart';
 import '../../../domain/reading/wpm_scale.dart';
 import '../../../routing/routes.dart';
 import '../../../services/haptics.dart';
+import '../../../services/word_speaker.dart';
 import '../../../theme/app_typography.dart';
 import '../../../theme/reader_theme.dart';
 import '../../../widgets/buttons.dart';
@@ -17,6 +20,7 @@ import '../../../widgets/states.dart';
 import '../../settings/application/settings_controller.dart';
 import '../application/reader_controller.dart';
 import '../engine/rsvp_engine.dart';
+import 'widgets/bookmark_sheet.dart';
 import 'widgets/chapter_sheet.dart';
 import 'widgets/paused_context.dart';
 import 'widgets/reader_controls.dart';
@@ -43,6 +47,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with WidgetsBinding
   final ValueNotifier<String?> _hud = ValueNotifier(null);
   Timer? _hudTimer;
   RsvpEngine? _listenedEngine;
+  final WordSpeaker _speaker = WordSpeaker();
+  int? _spokenIndex;
 
   ReaderController get _controller => ref.read(readerControllerProvider(_args).notifier);
 
@@ -57,6 +63,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with WidgetsBinding
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _listenedEngine?.playing.removeListener(_onPlayingChanged);
+    _listenedEngine?.playing.removeListener(_onWordForVoice);
+    _listenedEngine?.position.removeListener(_onWordForVoice);
+    _speaker.stop();
     _hideTimer?.cancel();
     _hudTimer?.cancel();
     _hud.dispose();
@@ -74,8 +83,35 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with WidgetsBinding
   void _attachEngine(RsvpEngine engine) {
     if (identical(engine, _listenedEngine)) return;
     _listenedEngine?.playing.removeListener(_onPlayingChanged);
+    _listenedEngine?.playing.removeListener(_onWordForVoice);
+    _listenedEngine?.position.removeListener(_onWordForVoice);
     _listenedEngine = engine;
     engine.playing.addListener(_onPlayingChanged);
+    engine.playing.addListener(_onWordForVoice);
+    engine.position.addListener(_onWordForVoice);
+  }
+
+  void _onWordForVoice() {
+    final engine = _listenedEngine;
+    if (engine == null || !mounted) return;
+    final aloud = ref.read(readerSettingsProvider).readAloud;
+    if (!aloud || !engine.isPlaying || engine.content.isEmpty) {
+      _spokenIndex = null;
+      _speaker.stop();
+      return;
+    }
+    final index = engine.position.value;
+    if (index == _spokenIndex) return;
+    final phrase = VoicePace.phrase(engine.content.words, index, engine.chunkSize);
+    if (phrase.isEmpty || !VoicePace.canSpeak(engine.displayMicrosAt(index))) {
+      if (_spokenIndex != null) {
+        _spokenIndex = null;
+        _speaker.stop();
+      }
+      return;
+    }
+    _spokenIndex = index;
+    _speaker.speak(phrase, relativeRate: VoicePace.rateFor(engine.wpm.value));
   }
 
   void _onPlayingChanged() {
@@ -126,6 +162,23 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with WidgetsBinding
     _controller.setWpm(next);
     _haptics.selection();
     _showHud('$next WPM');
+  }
+
+  void _replaySentence(RsvpEngine engine) {
+    _controller.replaySentence();
+    _haptics.selection();
+    _showHud('Sentence');
+  }
+
+  Future<void> _toggleBookmark() async {
+    final book = _controller.engine == null ? null : ref.read(readerControllerProvider(_args)).book;
+    final marked = book?.hasBookmarkNear(
+          _controller.engine!.content.sentenceStart(_controller.engine!.position.value),
+        ) ??
+        false;
+    await _controller.toggleBookmark();
+    _haptics.selection();
+    _showHud(marked ? 'Place removed' : 'Place saved');
   }
 
   void _onLongPress(RsvpEngine engine) {
@@ -188,6 +241,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with WidgetsBinding
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(readerSettingsProvider.select((s) => s.readAloud), (previous, next) {
+      if (!next) {
+        _spokenIndex = null;
+        _speaker.stop();
+      } else {
+        _onWordForVoice();
+      }
+    });
     final state = ref.watch(readerControllerProvider(_args));
     final settings = ref.watch(readerSettingsProvider);
     final theme = ReaderTheme.of(settings.themeId);
@@ -264,6 +325,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with WidgetsBinding
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _toggleControls,
+              onDoubleTap: () => _replaySentence(engine),
               onLongPress: () => _onLongPress(engine),
               onHorizontalDragEnd: _onHorizontalSwipe,
               onVerticalDragEnd: (d) => _onVerticalSwipe(d, engine),
@@ -279,16 +341,36 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> with WidgetsBinding
                 position: engine.position,
                 style: wordStyle,
                 height: wordZoneHeight,
+                chunkSize: settings.chunkSize,
               ),
             ),
           ),
-          if (settings.showContextWhenPaused)
-            Positioned(
-              left: 0,
-              right: 0,
-              top: focalY + wordZoneHeight / 2 + 8,
-              child: IgnorePointer(child: PausedContext(engine: engine, theme: theme)),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: focalY + wordZoneHeight / 2 + 8,
+            child: Column(
+              children: [
+                if (settings.showContextWhenPaused)
+                  IgnorePointer(child: PausedContext(engine: engine, theme: theme)),
+                _PausedTools(
+                  engine: engine,
+                  theme: theme,
+                  bookmarks: state.book?.bookmarks ?? const [],
+                  onReplay: () => _replaySentence(engine),
+                  onBookmark: _toggleBookmark,
+                  onPlaces: () {
+                    _controller.pause();
+                    showBookmarkSheet(
+                      context,
+                      bookmarks: state.book?.bookmarks ?? const [],
+                      onOpen: _controller.seek,
+                    );
+                  },
+                ),
+              ],
             ),
+          ),
           Positioned(
             left: 0,
             right: 0,
@@ -380,6 +462,58 @@ class _FadingControls extends StatelessWidget {
       child: visible
           ? Listener(key: const ValueKey('controls'), onPointerDown: (_) => onInteract(), child: child)
           : const SizedBox.shrink(key: ValueKey('hidden')),
+    );
+  }
+}
+
+class _PausedTools extends StatelessWidget {
+  const _PausedTools({
+    required this.engine,
+    required this.theme,
+    required this.bookmarks,
+    required this.onReplay,
+    required this.onBookmark,
+    required this.onPlaces,
+  });
+
+  final RsvpEngine engine;
+  final ReaderTheme theme;
+  final List<BookBookmark> bookmarks;
+  final VoidCallback onReplay;
+  final VoidCallback onBookmark;
+  final VoidCallback onPlaces;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: engine.playing,
+      builder: (context, playing, _) {
+        if (playing) return const SizedBox.shrink();
+        return ValueListenableBuilder<int>(
+          valueListenable: engine.position,
+          builder: (context, position, _) {
+            final saved = engine.content.isEmpty
+                ? false
+                : bookmarks.any((b) => (b.wordIndex - engine.content.sentenceStart(position)).abs() <= 8);
+            final style = Theme.of(context).textTheme.labelLarge?.copyWith(color: theme.chrome);
+            return Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 4,
+                children: [
+                  TextButton(onPressed: onReplay, child: Text('Replay sentence', style: style)),
+                  TextButton(
+                    onPressed: onBookmark,
+                    child: Text(saved ? 'Place saved' : 'Save place', style: style),
+                  ),
+                  if (bookmarks.isNotEmpty) TextButton(onPressed: onPlaces, child: Text('Places', style: style)),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

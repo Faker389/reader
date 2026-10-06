@@ -149,6 +149,7 @@ class SessionDraft {
     required this.currentPosition,
     required this.startPercentage,
     required this.currentPercentage,
+    this.retraces = 0,
   });
 
   final String id;
@@ -166,6 +167,9 @@ class SessionDraft {
   final double startPercentage;
   final double currentPercentage;
 
+  /// Backward jumps during the session. Used by training mode.
+  final int retraces;
+
   JsonMap toJson() => {
         'id': id,
         'bookId': bookId,
@@ -181,6 +185,7 @@ class SessionDraft {
         'currentPosition': currentPosition,
         'startPercentage': startPercentage,
         'currentPercentage': currentPercentage,
+        'retraces': retraces,
       };
 
   factory SessionDraft.fromJson(JsonMap json) {
@@ -200,6 +205,7 @@ class SessionDraft {
       currentPosition: json.integer('currentPosition'),
       startPercentage: json.dbl('startPercentage'),
       currentPercentage: json.dbl('currentPercentage'),
+      retraces: json.integer('retraces'),
     );
   }
 }

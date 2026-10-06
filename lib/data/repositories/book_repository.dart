@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
+
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/errors/app_failure.dart';
+import '../../core/utils/offload.dart';
 import '../../core/utils/sanitize.dart';
 import '../../domain/models/book.dart';
 import '../../domain/models/book_content.dart';
@@ -44,22 +45,27 @@ class BookRepository {
   Stream<List<Book>> watchAll() => _store.watch();
   Book? byId(String id) => _store.get(id);
 
-  File? coverFile(Book book) => book.coverPath == null ? null : _files.resolve(book.coverPath!);
+  File? coverFile(Book book) {
+    final relative = book.coverPath;
+    if (relative == null) return null;
+    final path = _files.filesystemPath(relative);
+    if (path == null) return null;
+    return File(path);
+  }
 
-  /// Loads and tokenises the book text in a background isolate. The most
-  /// recently opened book is cached so returning to the reader is instant.
+  /// Loads and tokenises the book text off the UI isolate where possible. The
+  /// most recently opened book is cached so returning to the reader is instant.
   Future<BookContent> loadContent(String bookId) async {
     if (_cachedContentId == bookId && _cachedContent != null) return _cachedContent!;
-    final file = _files.resolve(UserFiles.contentPath(bookId));
-    if (!await file.exists()) {
+    final raw = await _files.readString(UserFiles.contentPath(bookId));
+    if (raw == null) {
       throw const AppFailure(
         "This book's text isn't on this device. Import the file again to keep reading.",
         kind: FailureKind.storage,
       );
     }
-    final path = file.path;
-    final content = await Isolate.run(() {
-      final json = jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
+    final content = await runOffload(() {
+      final json = jsonDecode(raw) as Map<String, dynamic>;
       return Tokenizer.tokenize(ParsedBook.chaptersFromContentJson(json));
     });
     if (content.isEmpty) throw const ImportException(ImportErrorType.emptyBook);
@@ -80,7 +86,7 @@ class BookRepository {
   }) async {
     final bookId = id ?? const Uuid().v4();
     final chapters = parsed.chapters;
-    final prepared = await Isolate.run(() {
+    final prepared = await runOffload(() {
       final content = Tokenizer.tokenize(chapters);
       return (
         json: jsonEncode(ParsedBook(title: '', author: '', chapters: chapters).toContentJson()),
@@ -138,7 +144,7 @@ class BookRepository {
       final hasContent = await _files.exists(UserFiles.contentPath(sample.id));
       if (existing != null && hasContent && !needsRefresh) continue;
       final text = await _assets.loadString(sample.asset);
-      final chapters = await Isolate.run(() => TxtImporter.parseText(text));
+      final chapters = await runOffload(() => TxtImporter.parseText(text));
       await addParsedBook(
         ParsedBook(title: sample.title, author: sample.author, chapters: chapters),
         format: BookFormat.sample,
@@ -201,6 +207,23 @@ class BookRepository {
   }
 
   Future<void> toggleFavorite(String id) => _update(id, (b) => b.copyWith(favorite: !b.favorite));
+
+  /// Adds or removes a bookmark near [wordIndex]. Bookmarks stay on this device.
+  Future<Book?> toggleBookmark(String id, {required int wordIndex, required String label}) async {
+    final book = _store.get(id);
+    if (book == null) return null;
+    final next = [...book.bookmarks];
+    final existing = next.indexWhere((b) => (b.wordIndex - wordIndex).abs() <= 8);
+    if (existing >= 0) {
+      next.removeAt(existing);
+    } else {
+      next.add(BookBookmark(wordIndex: wordIndex, label: label, createdAt: DateTime.now()));
+      next.sort((a, b) => a.wordIndex.compareTo(b.wordIndex));
+    }
+    final updated = book.copyWith(bookmarks: next, syncPending: book.syncPending);
+    await _store.put(updated);
+    return updated;
+  }
 
   Future<void> setCompleted(String id, bool completed) => _update(
         id,

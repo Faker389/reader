@@ -95,8 +95,7 @@ class ProfileRepository {
       }
     } else {
       final relative = '${UserFiles.avatarPath}-${DateTime.now().millisecondsSinceEpoch}.$extension';
-      final file = await _files.writeBytes(relative, bytes);
-      avatar = file.path;
+      avatar = await _files.writeBytes(relative, bytes);
     }
     await update((p) => p.copyWith(avatar: avatar));
   }
